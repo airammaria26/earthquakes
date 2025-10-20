@@ -1,14 +1,11 @@
-# The Python standard library includes some functionality for communicating
-# over the Internet.
-# However, we will use a more powerful and simpler library called requests.
-# This is external library that you may need to install first.
-import requests
 import json
+import requests
+from datetime import datetime
+import matplotlib.pyplot as plt
+from collections import defaultdict
 
 
 def get_data():
-    # With requests, we can ask the web service for the data.
-    # Can you understand the parameters we are passing here?
     response = requests.get(
         "http://earthquake.usgs.gov/fdsnws/event/1/query.geojson",
         params={
@@ -21,15 +18,54 @@ def get_data():
             "endtime": "2018-10-11",
             "orderby": "time-asc"}
     )
+    return response.json()
 
-    # Convert the JSON text to a Python dictionary
-    data = json.loads(response.text)
-    return data
+def extract_year_and_magnitude(data):
+    freq_per_year = defaultdict(int)
+    mag_sum_per_year = defaultdict(float)
+    count_per_year = defaultdict(int)
 
+    for eq in data["features"]:
+        timestamp_ms = eq["properties"]["time"]
+        date = datetime.utcfromtimestamp(timestamp_ms / 1000)
+        year = date.year
+        magnitude = eq["properties"]["mag"]
+        if magnitude is not None:
+            freq_per_year[year] += 1
+            mag_sum_per_year[year] += magnitude
+            count_per_year[year] += 1
+
+    return freq_per_year, mag_sum_per_year, count_per_year
+
+def plot_data(freq_per_year, mag_sum_per_year, count_per_year):
+    years = sorted(freq_per_year.keys())
+
+    # Frequency plot
+    frequencies = [freq_per_year[year] for year in years]
+
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.bar(years, frequencies, color='skyblue')
+    plt.title("Earthquake Frequency per Year")
+    plt.xlabel("Year")
+    plt.ylabel("Number of Earthquakes")
+
+    # Average magnitude plot
+    avg_magnitudes = [mag_sum_per_year[year] / count_per_year[year] for year in years]
+
+    plt.subplot(1, 2, 2)
+    plt.plot(years, avg_magnitudes, marker='o', linestyle='-', color='orange')
+    plt.title("Average Earthquake Magnitude per Year")
+    plt.xlabel("Year")
+    plt.ylabel("Average Magnitude")
+
+    plt.tight_layout()
+    plt.savefig("earthquake_stats.png")
+    print("Plot saved as 'earthquake_stats.png'")
+    
 def count_earthquakes(data):
     """Get the total number of earthquakes in the response."""
-    return len(data["features"])
-
+    return data["metadata"]["count"]
 
 def get_magnitude(earthquake):
     """Retrive the magnitude of an earthquake item."""
@@ -38,52 +74,21 @@ def get_magnitude(earthquake):
 
 def get_location(earthquake):
     """Retrieve the latitude and longitude of an earthquake item."""
-    coords = earthquake["geometry"]["coordinates"]
-    longitude = coords[0]
-    latitude = coords[1]
-    return (latitude, longitude)
-
-
-def get_place(earthquake):
-    """Retrieve the human-readable place name, if available."""
-    return earthquake["properties"].get("place", "Unknown location")
-
+    coordinates = earthquake["geometry"]["coordinates"]
+    # There are three coordinates, but we don't care about the third (altitude)
+    return (coordinates[0], coordinates[1])
 
 def get_maximum(data):
-    """
-    Get the magnitude and all locations of the strongest earthquakes in the data.
-    Returns:
-        max_mag (float): the maximum magnitude found
-        strongest_quakes (list): list of tuples (location, place_name)
-    """
-    features = data["features"]
-    if not features:
-        return None, []
+    """Get the magnitude and location of the strongest earthquake in the data."""
+    current_max_magnitude = get_magnitude(data["features"][0])
+    current_max_location = get_location(data["features"][0])
+    for item in data["features"]:
+        magnitude = get_magnitude(item)
+        if magnitude > current_max_magnitude:
+            current_max_magnitude = magnitude
+            current_max_location = get_location(item)
+    return current_max_magnitude, current_max_location
 
-    # Find the maximum magnitude
-    magnitudes = [get_magnitude(q) for q in features if get_magnitude(q) is not None]
-    max_mag = max(magnitudes)
-
-    # Find all earthquakes with this magnitude
-    strongest_quakes = []
-    for quake in features:
-        mag = get_magnitude(quake)
-        if mag == max_mag:
-            strongest_quakes.append((get_location(quake), get_place(quake)))
-
-    return max_mag, strongest_quakes
-
-
-# Main execution
-if __name__ == "__main__":
-    data = get_data()
-    total = count_earthquakes(data)
-    print(f"Loaded {total} earthquakes from the dataset.")
-    max_magnitude, strongest = get_maximum(data)
-
-    if not strongest:
-        print("No earthquakes found in the dataset.")
-    else:
-        print(f"\nThe strongest earthquakes had magnitude {max_magnitude}:\n")
-        for i, (location, place) in enumerate(strongest, 1):
-            print(f"{i}. Location: {location}, Place: {place}")
+data = get_data()
+freq_per_year, mag_sum_per_year, count_per_year = extract_year_and_magnitude(data)
+plot_data(freq_per_year, mag_sum_per_year, count_per_year)
